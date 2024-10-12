@@ -140,7 +140,7 @@ while (TRUE) {  # Loop that will break when no bicluster is found
   range_k <- range_k + 1 # Increment range_k for the next iteration
 }
 
-#### Flag possbile cheaters
+#### Flag possible cheaters
 max_detect <- max(as.numeric(names(table(detect))))
 flag_person <- unique(which(detect > round(max_detect/5), arr.ind=T)[,"row"])
 
