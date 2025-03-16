@@ -1,13 +1,14 @@
 ################################################################
 #### Supplements for Simultaneous Detection of Cheaters and ####
-########## Cheating Items Using Biclustering Approach ##########
-############# Hyeryung Lee & Walter P. Vispoel (2024) ##########
+########## Cheating Items Using a Biclustering Approach ########
+############# Hyeryung Lee & Walter P. Vispoel (2025) ##########
 ################################################################
 
 #### Library
 library(LNIRT)
 library(QUBIC)
 library(DescTools)
+
 
 #### Data: Cizek & Wollack (2016) - Form 1
 data <- CredentialForm1
@@ -23,168 +24,126 @@ true_ci <- c(1,3,4,7,8,9,10,14,15,21,
              164,165,169,170) # true cheating items
 
 
-#### Input Matrix Generation 
-mat <- matrix(0, nrow=nrow(data), ncol=170)
-for (i in 1:170){
-  iraw <- paste0("iraw.", i) # response accuracy
-  idur <- paste0("idur.", i) # response time
-  iresp <- paste0("iresp.", i) # response choice
-  
-  comp <- data.frame(
-    accuracy = as.numeric(data[[iraw]]), 
-    time = as.numeric(data[[idur]]),
-    choice = as.factor(data[[iresp]]))
-  
-  # Code 10 for correct and fast responses
-  correct <- which(comp[,1]==1 & comp[,2]< median(comp[,2])/2)
-  mat[correct, i] <- 10  
-  # Use response choice for incorrect and fast responses
-  incorrect <- which(comp[,1]==0 & comp[,2]<median(comp[,2])/2)
-  mat[incorrect, i] <- comp[incorrect, 3] 
+#### Input matrix generation 
+mat <- matrix(0, nrow = N, ncol = K)
+time <- data[, 411:580]
+time[time == 0] <- NA
+
+# Standardize time for each item to create a time matrix
+item_mean_time <- colMeans(time, na.rm = T) # Compute mean response time for each item (column)
+time_mat <- matrix(NA, nrow = N, ncol = K)
+for (i in 1:K) {
+  time_mat[, i] <- (time[, i] - item_mean_time[i]) / sd(time[, i], na.rm = T)
 }
 
-# Customized QUBIC function : exclude discretization 
-qubic_no_disc <- function (x, r = 1L, q = 0.06, c = 0.95, o = 100, f = 1, 
-                           k = max(ncol(x)%/%20, 2), type = "default", P = FALSE, 
-                           C = FALSE, verbose = TRUE, 
-                           weight = NULL, seedbicluster = NULL) 
-{x_d <- x
-return(qubiclust_d(x_d, c, o, f, k, type, P, C, verbose, 
-                   weight, seedbicluster))
+# Compute each examinee's average standardized response time
+person_mean_time <- apply(time_mat, 1, mean, na.rm = TRUE)
+
+# Compute time difference for each examinee and item
+time_dif_mat <- matrix(NA, nrow = N, ncol = K)
+for (p in 1:N) {
+  time_dif_mat[p, ] <- (time_mat[p, ] - person_mean_time[p]) / sd(time_mat[p, ], na.rm = T)
 }
 
-# Result table format
-res_tab <- matrix(nrow = 1, ncol = 4)
-colnames(res_tab) <- c("examinee_sensitivity", "examinee_specificity",  
-                       "item_sensitivity","item_specificity")
+# Adjust responses in 'mat' based on response time
+for (p in 1:N) {
+  for (i in 1:K) {
+    iraw  <- paste0("iraw.", i)   # Response accuracy
+    idur  <- paste0("idur.", i)   # Response time
+    iresp <- paste0("iresp.", i)  # Response choice
+    
+    # Create a temporary data frame for the current item
+    comp <- data.frame(
+      accuracy = as.numeric(data[[iraw]]),
+      time     = as.numeric(data[[idur]]),
+      choice   = as.factor(data[[iresp]])
+    )
+    # Set a threshold: 50% of the median response time for this item
+    median2 <- median(comp$time, na.rm = T) * 0.5
+    
+    if (is.na(time_dif_mat[p, i])) {
+      mat[p, i] <- 9 # If time difference is NA, mark as 9 (flag value)
+    } else if (comp$time[p] < median2 && time_dif_mat[p, i] < 0 && comp$accuracy[p] == 1) {
+      mat[p, i] <- 10 # If response time is fast (below threshold), time is below average, and answer is correct, code 10
+    } else if (comp$time[p] < median2 && time_dif_mat[p, i] < 0 && comp$accuracy[p] == 0) {
+      mat[p, i] <- as.numeric(as.character(comp$choice[p])) # If response time is fast, time is below average, and answer is incorrect, use the original response choice
+    } else if (is.na(comp$time[p]) || is.na(comp$accuracy[p])) {
+      mat[p, i] <- 9
+    }
+  }
+}
+# Define a customized QUBIC function (excluding discretization)
+qubic_no_disc <- function(x, r = 1L, q = 0.06, c = 0.95, o = 100, f = 1,
+                          k = max(ncol(x) %/% 20, 2), type = "default", P = F,
+                          C = F, verbose = T, weight = NULL, seedbicluster = NULL) {
+  x_d <- x
+  return(qubiclust_d(x_d, c, o, f, k, type, P, C, verbose, weight, seedbicluster))
+}
+
 
 
 #### Cheating detection using QUBIC
-range_k <- 3  # Initial value for minimum column width of a bicluster
-detect <- matrix(0, nrow= N, ncol= K) # Detection result matrix 
-biclusters_all <- list()
-while (TRUE) {  # Loop that will break when no bicluster is found
-  res <- tryCatch(
-    # Bicluster generation with the desired number of output biclusters = 100
-    qubic_no_disc(mat, P = T, c = 0.8, o = 100, k = range_k, verbose = F),
-    error = function(e) { NULL } 
-    )
-  
-  if (is.null(res)) {
-    print(paste("No bicluster found at k =", range_k))
-    break 
-  } else {
-    biclusters <- list() 
-    for (h in 1:res@Number) { # Collect biclusters
-      bicluster <- list(
-        rows = which(res@RowxNumber[, h] == TRUE), # row = examinee
-        cols = which(res@NumberxCol[h, ] == TRUE)  # col = item
-      )
-      # Filter biclusters with > 2/3 correct responses
-      if (length(bicluster$rows) < 1 ||
-          length(which(colMeans(mat[bicluster$rows, bicluster$cols]) == 10)) < 
-          length(bicluster$cols)/1.5) { 
-        biclusters[[h]] <- NULL
-      } else {
-        biclusters[[h]] <- bicluster  # Collect filtered biclusters
-      }
-    }
-    # Calculate p-values for biclusters and filter by p < 0.05
-    if (length(biclusters) > 0) {
-      p_mat <- matrix(NA, nrow = length(biclusters), ncol = 1) 
-      for (z in 1:length(biclusters)) {
-        if (is.null(biclusters[[z]]) || 
-            length(biclusters[[z]]$rows) == 0 || 
-            length(biclusters[[z]]$cols) == 0) {
-          p_mat[z] <- NA
-        } else {
-          rowss <- biclusters[[z]]$rows
-          colss <- biclusters[[z]]$cols
-          
-          
-          ori_pattern <- apply(mat[rowss, colss], 2, Mode) # Pattern within a bicluster
-          pattern <- rep(NA, ncol(mat))  
-          pattern[colss] <- ori_pattern 
-          
-          column_probs <- sapply(colss, function(col) {
-            mean(mat[, col] == pattern[col], na.rm = T) 
-          })
-          pattern_prob <- prod(column_probs, na.rm = T) # Probability of the same pattern
-          expected <- nrow(mat) * pattern_prob # Expected number of rows with the same pattern
-          
-          # Calculate p-value using Poisson distribution
-          observed <- length(rowss)
-          p_value <- ppois(observed - 1, lambda = expected, lower.tail = F)
-          p_mat[z] <- p_value
-          low_p <- which(p_mat < 0.05) # Filter biclusters by p-value < 0.05
-          
-          # Collect the filtered biclusters
-          person_det <- integer()
-          item_det <- integer()
-          for (c in low_p) {
-            per_current <- biclusters[[c]]$rows
-            person_det <- union(person_det, per_current)
-            item_current <- biclusters[[c]]$cols
-            item_det <- union(item_det, item_current)
-          }
-        }
-      }
-      detect_current <- matrix(0, nrow = N, ncol = K) # Cheating detection matrix
-      detect_current[person_det, item_det] <- 1 # Cells appearing in the filtered biclusters
-      detect <- detect + detect_current # Collect the cells
-      
-      # Collect biclusters which has p-value < 0.05
-      biclusters_all <- c(biclusters[low_p], biclusters_all) 
-    }
-  }
-  range_k <- range_k + 1 # Increment range_k for the next iteration
-}
+bicluster_n <- 10 # adjust the desired number of outputted biclusters
+res <- qubic_no_disc(mat, c = 1, o= bicluster_n, k = 2, verbose = F)
 
-#### Flag possible cheaters
-max_detect <- max(as.numeric(names(table(detect))))
-flag_person <- unique(which(detect > round(max_detect/5), arr.ind=T)[,"row"])
-
-#### Flag possible cheating items
-# Cheating item time threshold: median of all response time/4
-time_start <- which(colnames(data)=="idur.1")
-time <- unlist(data[,time_start:(time_start+169)])
-time <- time[-which(time==0)] # Exclude the cases with time=0
-median_t <- median(time)
-thre_t <- median_t/4
-
-# Collect all filtered biclusters
-bic_unique <- unique(biclusters_all)
-bic_unique <- Filter(Negate(is.null), bic_unique)
-
-bic_col_time <- list()
-for (i in 1:length(bic_unique)){
-  # biclusters comprising only flagged examinees
-  if(length(intersect(bic_unique[[i]]$rows, flag_person))==length(bic_unique[[i]]$rows)){
-    row_time <- data[bic_unique[[i]]$rows, time_start:(time_start+169)] # time variables
-    bic_time <- row_time[,bic_unique[[i]]$cols] # response time of a bicluster
-    bic_col_time[[i]] <- (colMeans(bic_time)) # average response time for each column within a bicluster
-  }else{
-    bic_col_time[[i]] <- NA
+# Collect biclusters from the QUBIC result
+biclusters <- list()
+for (h in 1:res@Number) {
+  bicluster <- list(
+    rows = which(res@RowxNumber[, h] == T),  # Examinees 
+    cols = which(res@NumberxCol[h, ] == T)   # Items 
+  )
+# Filter biclusters based on the proportion(50%) of correct, fast responses
+  if (length(bicluster$rows) >= 1 &&
+      length(which(colMeans(mat[bicluster$rows, bicluster$cols]) == 10)) > length(bicluster$cols) * 0.5) {
+    biclusters[[h]] <- bicluster
   }
 }
-# Filter: column which has average response time within a bicluster less than median of all response time/4
-filter_item <- unique(names(which(unlist(bic_col_time) < thre_t))) 
-flag_item <- gsub("idur\\.","", filter_item)
+
+# Calculate p-values for each bicluster and filter by p < 0.05
+p_values <- sapply(biclusters, function(bic) {
+  if (is.null(bic) || length(bic$rows) == 0 || length(bic$cols) == 0) return(NA)
+  ori_pattern <- apply(mat[bic$rows, bic$cols], 2, Mode)  
+  pattern <- rep(NA, ncol(mat))
+  pattern[bic$cols] <- ori_pattern
+  column_probs <- sapply(bic$cols, function(col) mean(mat[, col] == pattern[col], na.rm = T))
+  pattern_prob <- prod(column_probs, na.rm = T)
+  expected <- N * pattern_prob
+  observed <- length(bic$rows)
+  p_value <- ppois(observed - 1, lambda = expected, lower.tail = F)
+  return(p_value)
+})
+filtered_indices <- which(p_values < 0.05)
+biclusters_filtered <- biclusters[filtered_indices]
+
+
+#### Flag possible cheaters and cheating items
+person_det <- integer()
+item_det <- integer()
+for (bic in biclusters_filtered) {
+  person_det <- union(person_det, bic$rows)
+  item_det <- union(item_det, bic$cols)
+}
+flag_person <- unique(person_det)
+
+thre_t <- median(unlist(time), na.rm=T)/4
+flag_items <- integer()
+for (bic in biclusters_filtered){
+  time_bic <- time_data[bic$rows, bic$cols] 
+  flag_items <- c(flag_items ,bic$cols[which(colMeans(time_bic) < thre_t)]) 
+}
+flag_items <- unique(flag_items)
 
 
 #### Cheating detection results
-# Examinee sensitivity
+res_tab <- matrix(nrow = 1, ncol = 4)
+colnames(res_tab) <- c("examinee_sensitivity", "examinee_specificity", "item_sensitivity", "item_specificity")
 res_tab[1] <- length(intersect(flag_person, true_cheater)) / length(true_cheater)
+res_tab[2] <- length(intersect(setdiff(1:N, flag_person), setdiff(1:N, true_cheater))) / 
+  length(setdiff(1:N, true_cheater))
+res_tab[3] <- length(intersect(flag_items, true_ci)) / length(true_ci)
+res_tab[4] <- length(intersect(setdiff(1:K, flag_items), setdiff(1:K, true_ci))) / 
+  length(setdiff(1:K, true_ci))
 
-# Examinee specificity
-res_tab[2] <- length(intersect(setdiff(1:N, flag_person), setdiff(1:N, true_cheater))) / length(setdiff(1:N, true_cheater))
-
-# Item sensitivity
-res_tab[3] <- length(intersect(flag_item, true_ci)) / length(true_ci)
-
-# Item specificity
-res_tab[4] <- length(intersect(setdiff(1:K, flag_item), setdiff(1:K, true_ci))) / length(setdiff(1:K, true_ci))
-
-# Final cheating detection results
-round(res_tab, 3) 
-
+# Output the final detection results
+round(res_tab, 3)
