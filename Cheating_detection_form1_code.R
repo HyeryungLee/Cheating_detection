@@ -42,7 +42,7 @@ person_mean_time <- apply(time_mat, 1, mean, na.rm = TRUE)
 # Compute time difference for each examinee and item
 time_dif_mat <- matrix(NA, nrow = N, ncol = K)
 for (p in 1:N) {
-  time_dif_mat[p, ] <- (time_mat[p, ] - person_mean_time[p]) / sd(time_mat[p, ], na.rm = T)
+  time_dif_mat[p, ] <- (time_mat[p, ] - person_mean_time[p]) / sd(time_mat[p, ], na.rm = TRUE)
 }
 
 # Adjust responses in 'mat' based on response time
