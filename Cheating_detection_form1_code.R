@@ -30,7 +30,7 @@ time <- data[, 411:580]
 time[time == 0] <- NA
 
 # Standardize time for each item to create a time matrix
-item_mean_time <- colMeans(time, na.rm = T) # Compute mean response time for each item (column)
+item_mean_time <- colMeans(time, na.rm = TRUE) # Compute mean response time for each item (column)
 time_mat <- matrix(NA, nrow = N, ncol = K)
 for (i in 1:K) {
   time_mat[, i] <- (time[, i] - item_mean_time[i]) / sd(time[, i], na.rm = T)
