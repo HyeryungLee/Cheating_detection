@@ -33,7 +33,7 @@ time[time == 0] <- NA
 item_mean_time <- colMeans(time, na.rm = TRUE) # Compute mean response time for each item (column)
 time_mat <- matrix(NA, nrow = N, ncol = K)
 for (i in 1:K) {
-  time_mat[, i] <- (time[, i] - item_mean_time[i]) / sd(time[, i], na.rm = T)
+  time_mat[, i] <- (time[, i] - item_mean_time[i]) / sd(time[, i], na.rm = TRUE)
 }
 
 # Compute each examinee's average standardized response time
