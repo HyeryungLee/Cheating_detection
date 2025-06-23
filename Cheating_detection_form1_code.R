@@ -52,22 +52,24 @@ for (p in 1:N) {
     idur  <- paste0("idur.", i)   # Response time
     iresp <- paste0("iresp.", i)  # Response choice
     
-    # Create a temporary data frame for the current item
-    comp <- data.frame(
-      accuracy = as.numeric(data[[iraw]]),
-      time     = as.numeric(data[[idur]]),
-      choice   = as.factor(data[[iresp]])
-    )
+    # Values for this person and item
+    acc_val   <- as.numeric(data[[iraw]][p])
+    time_val  <- as.numeric(data[[idur]][p])
+    choice_val <- as.numeric(as.character(data[[iresp]][p]))
+    
     # Set a threshold: 50% of the median response time for this item
-    median2 <- median(comp$time, na.rm = T) * 0.5
+    median2 <- median(data[[idur]], na.rm = TRUE) * 0.5
+    
     
     if (is.na(time_dif_mat[p, i])) {
       mat[p, i] <- 9 # If time difference is NA, mark as 9 (flag value)
-    } else if (comp$time[p] < median2 && time_dif_mat[p, i] < 0 && comp$accuracy[p] == 1) {
-      mat[p, i] <- 10 # If response time is fast (below threshold), time is below average, and answer is correct, code 10
-    } else if (comp$time[p] < median2 && time_dif_mat[p, i] < 0 && comp$accuracy[p] == 0) {
-      mat[p, i] <- as.numeric(as.character(comp$choice[p])) # If response time is fast, time is below average, and answer is incorrect, use the original response choice
-    } else if (is.na(comp$time[p]) || is.na(comp$accuracy[p])) {
+    } else if (!is.na(time_val) && !is.na(acc_val) &&
+               time_val < median2 && time_dif_mat[p, i] < 0 && acc_val == 1) {
+      mat[p, i] <- 10 # If response time is fast and answer is correct, code 10
+    } else if (!is.na(time_val) && !is.na(acc_val) &&
+               time_val < median2 && time_dif_mat[p, i] < 0 && acc_val == 0) {
+      mat[p, i] <- choice_val # If response time is fast and answer is incorrect, use the original response choice
+    } else if (is.na(time_val) || is.na(acc_val)) {
       mat[p, i] <- 9
     }
   }
@@ -90,8 +92,8 @@ res <- qubic_no_disc(mat, c = 1, o= bicluster_n, k = 2, verbose = F)
 biclusters <- list()
 for (h in 1:res@Number) {
   bicluster <- list(
-    rows = which(res@RowxNumber[, h] == T),  # Examinees 
-    cols = which(res@NumberxCol[h, ] == T)   # Items 
+    rows = which(res@RowxNumber[, h] == TRUE),  # Examinees 
+    cols = which(res@NumberxCol[h, ] == TRUE)   # Items 
   )
 # Filter biclusters based on the proportion(50%) of correct, fast responses
   if (length(bicluster$rows) >= 1 &&
@@ -106,7 +108,7 @@ p_values <- sapply(biclusters, function(bic) {
   ori_pattern <- apply(mat[bic$rows, bic$cols], 2, Mode)  
   pattern <- rep(NA, ncol(mat))
   pattern[bic$cols] <- ori_pattern
-  column_probs <- sapply(bic$cols, function(col) mean(mat[, col] == pattern[col], na.rm = T))
+  column_probs <- sapply(bic$cols, function(col) mean(mat[, col] == pattern[col], na.rm = TRUE))
   pattern_prob <- prod(column_probs, na.rm = T)
   expected <- N * pattern_prob
   observed <- length(bic$rows)
@@ -126,7 +128,7 @@ for (bic in biclusters_filtered) {
 }
 flag_person <- unique(person_det)
 
-thre_t <- median(unlist(time), na.rm=T)/4
+thre_t <- median(unlist(time), na.rm=TRUE)/4
 flag_items <- integer()
 for (bic in biclusters_filtered){
   time_bic <- time_data[bic$rows, bic$cols] 
